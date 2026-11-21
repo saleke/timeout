@@ -126,6 +126,11 @@ android {
 androidComponents.onVariants { variant ->
     variant.sources.kotlin?.addGeneratedSourceDirectory(generateDesignTokens, GenerateDesignTokens::kotlinOutput)
     variant.sources.res?.addGeneratedSourceDirectory(generateDesignTokens, GenerateDesignTokens::resourceOutput)
+    variant.outputs.forEach { output ->
+        output.outputFileName.set(output.versionName.map { version ->
+            if (variant.buildType == "debug") "timeout-$version.apk" else "timeout-$version-${variant.buildType}.apk"
+        })
+    }
 }
 
 ksp { arg("room.schemaLocation", layout.projectDirectory.dir("schemas").asFile.path) }

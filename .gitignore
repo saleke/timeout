@@ -9,3 +9,15 @@ local.properties
 *.jks
 *.keystore
 *.blend1
+
+# Local product/design workspace, not part of the public source repository.
+.agents/
+.opencode/
+AGENTS.md
+PRODUCT.md
+skills-lock.json
+docs/
+tools/
+design-system/timeout/MASTER.md
+assets/brand/*
+!assets/brand/timeout-logo.png
