@@ -105,6 +105,8 @@ Timeout works locally and does not require an account.
 - No `INTERNET` permission
 - No advertising or analytics connection
 - Rules and history stay on the device
+
+Read the full [Privacy Policy](PRIVACY.md).
 - App protection does not retrieve screen text or messages
 - No screenshots or view-hierarchy capture
 
@@ -124,7 +126,7 @@ This APK is distributed through GitHub while the Google Play release is being pr
 ### Verify The Download
 
 ```text
-SHA-256: 6144fc1a7eae418b4b47cbb86cd64f00fdb2e87c7d08202a559d1677260c85f3
+SHA-256: 86d04f2e9d6eea405b9e7bd22a8c6d82a67d3ef68f68d68ddf9574fa2d273658
 ```
 
 ## First Block Setup
@@ -182,6 +184,8 @@ app/build/outputs/apk/debug/timeout-0.4.0.apk
 Timeout 0.4.0 is an early-access Android build. The source includes automated policy, commitment, draft-restoration, time-selection, and adaptive-layout tests.
 
 Issues and feedback are welcome through [GitHub Issues](https://github.com/saleke/timeout/issues).
+
+Developer: [Saleke](https://saleke.is-a.dev)
 
 ## License
 

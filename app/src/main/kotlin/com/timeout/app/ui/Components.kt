@@ -115,7 +115,7 @@ fun DetailScaffold(title: String, onBack: () -> Unit, bottom: @Composable () -> 
         topBar = { TopAppBar(title = { Text(title) }, navigationIcon = { IconButton(onBack) { Symbol(R.drawable.ic_arrow_back, description = "Back") } },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background), actions = actions) },
         bottomBar = bottom,
-        snackbarHost = { snackbar?.let { SnackbarHost(it) } },
+        snackbarHost = { snackbar?.let { FeedbackSnackbarHost(it) } },
         content = content,
     )
 }

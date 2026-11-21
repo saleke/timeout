@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_icon_background" android:padding="8dp">
+    <ImageView android:id="@+id/widget_action" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:src="@drawable/ic_logo_foreground_3d" android:scaleType="fitCenter"
+        android:contentDescription="@string/widget_pause_app" />
+    <ImageView android:id="@+id/widget_status_dot" android:layout_width="11dp" android:layout_height="11dp"
+        android:layout_gravity="top|end" android:src="@drawable/widget_dot_ready" android:contentDescription="@null" />
+</FrameLayout>

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -26,6 +27,7 @@ import androidx.navigation.compose.*
 import androidx.navigation.toRoute
 import com.timeout.app.R
 import com.timeout.app.data.DraftScreen
+import com.timeout.app.widget.WidgetPinning
 import com.timeout.app.ui.screens.*
 import com.timeout.app.ui.theme.DesignTokens
 import com.timeout.app.ui.theme.LocalReducedMotion
@@ -57,6 +59,8 @@ fun TimeOutApp(vm: TimeOutViewModel, openProtectionSignal: Long, openDraftSignal
     val reducedMotion by vm.container.reducedMotion.collectAsStateWithLifecycle()
     val recovery by vm.draftRecovery.collectAsStateWithLifecycle()
     val replacement by vm.replacementDraft.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var widgetSuggestion by rememberSaveable { mutableStateOf(false) }
     // Separate the new graph's saved navigation state from earlier flat-graph installations.
     key("opaque-page-graph-v2") {
         val nav = rememberNavController()
@@ -95,7 +99,7 @@ fun TimeOutApp(vm: TimeOutViewModel, openProtectionSignal: Long, openDraftSignal
         LaunchedEffect(vm) {
             vm.events.collectLatest { event ->
                 when (event) {
-                    is UiEvent.Message -> snackbar.showSnackbar(event.text)
+                    is UiEvent.Message -> snackbar.showFeedback(event.text, event.kind)
                     is UiEvent.Saved -> {
                         focus.clearFocus()
                         keyboard?.hide()
@@ -105,8 +109,9 @@ fun TimeOutApp(vm: TimeOutViewModel, openProtectionSignal: Long, openDraftSignal
                             showTodayRequest++
                             if (!nav.popBackStack<Home>(inclusive = false)) nav.navigate(Home) { launchSingleTop = true }
                         }
-                        snackbar.showSnackbar(event.text)
+                        snackbar.showFeedback(event.text, event.kind)
                     }
+                    UiEvent.WidgetSuggestion -> widgetSuggestion = true
                 }
             }
         }
@@ -228,6 +233,15 @@ fun TimeOutApp(vm: TimeOutViewModel, openProtectionSignal: Long, openDraftSignal
             title = { Text("Start a new draft?") }, text = { Text("Your unfinished draft will be replaced.") },
             confirmButton = { TextButton({ nav.currentBackStackEntry?.let { open(Builder, it, vm::confirmReplacement) } }) { Text("Start new") } },
             dismissButton = { TextButton({ nav.currentBackStackEntry?.let { open(Builder, it, vm::resumeDraft) } }) { Text("Continue draft") } })
+        if (widgetSuggestion) AlertDialog(onDismissRequest = { widgetSuggestion = false },
+            icon = { Symbol(R.drawable.ic_brand_mark, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary) },
+            title = { Text("Quick block from Home") },
+            text = { Text("Add the Timeout widget for fast app and duration selection without opening the full app.") },
+            confirmButton = { TextButton({
+                widgetSuggestion = false
+                if (!WidgetPinning.request(context)) vm.setupMessage("Open your launcher's widget picker and choose Timeout.")
+            }) { Text("Add widget") } },
+            dismissButton = { TextButton({ widgetSuggestion = false }) { Text("Not now") } })
     }
 }
 
@@ -286,7 +300,7 @@ private fun MainTabs(state: AppUiState, vm: TimeOutViewModel, showTodayRequest: 
             bottomBar = { if (!wide) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 destinations.forEachIndexed { index, destination -> NavigationBarItem(selected == index, { if (selected != index) select(destination.route) },
                     icon = { Symbol(destination.icon) }, label = { Text(destination.label) }) }
-            } }, snackbarHost = { snackbar?.let { SnackbarHost(it) } }) { padding ->
+            } }, snackbarHost = { snackbar?.let { FeedbackSnackbarHost(it) } }) { padding ->
             Row(Modifier.fillMaxSize().padding(padding)) {
                 if (wide) NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
                     Spacer(Modifier.height(16.dp))

@@ -16,10 +16,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 @Immutable
-data class SupportingColors(val warning: Color, val onWarning: Color, val warningContainer: Color, val success: Color)
+data class SupportingColors(val warning: Color, val onWarning: Color, val warningContainer: Color,
+    val success: Color, val successContainer: Color, val onSuccess: Color)
 
 val LocalSupportingColors = staticCompositionLocalOf {
-    SupportingColors(Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified)
+    SupportingColors(Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified)
 }
 
 @Composable
@@ -66,7 +67,8 @@ fun TimeOutTheme(appearance: String = "system", content: @Composable () -> Unit)
             fontSize = DesignTokens.buttonLabelSize.sp, lineHeight = DesignTokens.buttonLabelLine.sp),
     )
     CompositionLocalProvider(LocalSupportingColors provides SupportingColors(
-        c.getValue("warning"), c.getValue("onWarningContainer"), c.getValue("warningContainer"), c.getValue("success"))) {
+        c.getValue("warning"), c.getValue("onWarningContainer"), c.getValue("warningContainer"), c.getValue("success"),
+        c.getValue("successContainer"), c.getValue("onSuccessContainer"))) {
         MaterialTheme(colorScheme = scheme, typography = typography, content = content)
     }
 }

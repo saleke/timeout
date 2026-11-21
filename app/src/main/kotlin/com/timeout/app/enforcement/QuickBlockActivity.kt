@@ -9,10 +9,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,14 +28,22 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -50,6 +61,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import java.util.UUID
+import kotlin.math.roundToInt
 
 internal enum class QuickStage { APPS, SELECTED, DURATION }
 internal data class QuickBlockState(
@@ -163,35 +175,80 @@ class QuickBlockActivity : ComponentActivity() {
 private fun QuickAppPicker(state: QuickBlockState, onSelect: (InstalledApp) -> Unit) {
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val haptic = LocalHapticFeedback.current
     var query by rememberSaveable { mutableStateOf("") }
     val filtered = remember(state.apps, query) { state.apps.filter { it.label.contains(query, true) || it.packageName.contains(query, true) } }
-    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 640.dp), state = rememberLazyListState(),
-        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        item(key = "title") { Text("Pause an app", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(bottom = 16.dp)) }
-        item(key = "search") {
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(bottom = 12.dp), label = { Text("Search apps") },
+    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
+    var dropBounds by remember { mutableStateOf<Rect?>(null) }
+    var dragging by remember { mutableStateOf<InstalledApp?>(null) }
+    var dragPosition by remember { mutableStateOf(Offset.Zero) }
+    val hovering by remember { derivedStateOf { dragging != null && dropBounds?.contains(dragPosition) == true } }
+    val targetColor by animateColorAsState(if (hovering) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        tween(160), label = "Drop target color")
+    LaunchedEffect(hovering) { if (hovering) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+
+    Box(Modifier.fillMaxWidth().heightIn(max = 680.dp).onGloballyPositioned { rootOrigin = it.positionInWindow() }) {
+        Column(Modifier.fillMaxWidth()) {
+            Text("Pause an app", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+            Surface(Modifier.fillMaxWidth().padding(horizontal = 24.dp).heightIn(min = 76.dp)
+                .onGloballyPositioned { dropBounds = it.boundsInWindow() }
+                .border(1.dp, if (hovering) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp)),
+                color = targetColor, shape = RoundedCornerShape(20.dp)) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Symbol(com.timeout.app.R.drawable.ic_brand_mark, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column {
+                        Text(if (hovering) "Release to choose" else "Drag an app here", style = MaterialTheme.typography.titleMedium)
+                        Text("Or tap any app below", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp), label = { Text("Search apps") },
                 leadingIcon = { Symbol(com.timeout.app.R.drawable.ic_search) }, singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { focus.clearFocus(); keyboard?.hide() }),
                 trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Symbol(com.timeout.app.R.drawable.ic_close, description = "Clear search") } })
-        }
-        if (state.loading) item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (!state.loading && filtered.isEmpty()) item(key = "empty") {
-            Text(if (query.isEmpty()) "No selectable apps" else "No apps match your search", style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(vertical = 24.dp))
-        }
-        items(filtered, key = { it.packageName }, contentType = { "app" }) { app ->
-            Surface(onClick = { onSelect(app) }, color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(16.dp)) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    AppIcon(app)
-                    Column(Modifier.weight(1f)) {
-                        Text(app.label, style = MaterialTheme.typography.bodyLarge)
-                        if (app.packageName in state.recent) Text("Recent", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), state = rememberLazyListState(),
+                contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (state.loading) item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (!state.loading && filtered.isEmpty()) item(key = "empty") {
+                    Text(if (query.isEmpty()) "No selectable apps" else "No apps match your search", style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(vertical = 24.dp))
+                }
+                items(filtered, key = { it.packageName }, contentType = { "app" }) { app ->
+                    var rowOrigin by remember(app.packageName) { mutableStateOf(Offset.Zero) }
+                    Surface(onClick = { onSelect(app) }, color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(16.dp)) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                            .onGloballyPositioned { rowOrigin = it.positionInWindow() }
+                            .pointerInput(app.packageName, dropBounds) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { point -> dragging = app; dragPosition = rowOrigin + point },
+                                    onDrag = { change, amount -> change.consume(); dragPosition += amount },
+                                    onDragEnd = {
+                                        val accepted = dropBounds?.contains(dragPosition) == true
+                                        dragging = null
+                                        if (accepted) onSelect(app)
+                                    },
+                                    onDragCancel = { dragging = null },
+                                )
+                            }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            AppIcon(app)
+                            Column(Modifier.weight(1f)) {
+                                Text(app.label, style = MaterialTheme.typography.bodyLarge)
+                                if (app.packageName in state.recent) Text("Recent", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                            }
+                            Symbol(com.timeout.app.R.drawable.ic_chevron_right, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    Symbol(com.timeout.app.R.drawable.ic_chevron_right, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+        dragging?.let { app ->
+            Image(app.icon, null, Modifier.offset {
+                IntOffset((dragPosition.x - rootOrigin.x - 28.dp.toPx()).roundToInt(), (dragPosition.y - rootOrigin.y - 28.dp.toPx()).roundToInt())
+            }.size(56.dp).zIndex(4f).graphicsLayer { shadowElevation = 12.dp.toPx(); scaleX = 1.08f; scaleY = 1.08f }
+                .clip(RoundedCornerShape(14.dp)))
         }
     }
 }

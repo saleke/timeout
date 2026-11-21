@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.edit
 import com.timeout.app.TimeOutApplication
 import com.timeout.app.ProtectionRuntime
 import com.timeout.app.ProtectionMode
@@ -12,6 +13,7 @@ import com.timeout.app.data.HistoryRecord
 import com.timeout.app.data.InstalledApp
 import com.timeout.app.data.commitOrThrow
 import com.timeout.app.data.PendingChange
+import com.timeout.app.widget.WidgetPinning
 import com.timeout.app.data.DraftCheckpoint
 import com.timeout.app.data.DraftScreen
 import com.timeout.app.data.restoredDraftCheckpoint
@@ -69,8 +71,9 @@ data class DraftPreview(
 data class DraftRecovery(val draftId: String, val screen: DraftScreen)
 
 sealed interface UiEvent {
-    data class Message(val text: String) : UiEvent
-    data class Saved(val text: String, val pendingRuleId: String? = null) : UiEvent
+    data class Message(val text: String, val kind: FeedbackKind = FeedbackKind.INFO) : UiEvent
+    data class Saved(val text: String, val pendingRuleId: String? = null, val kind: FeedbackKind = FeedbackKind.SUCCESS) : UiEvent
+    data object WidgetSuggestion : UiEvent
 }
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -206,13 +209,13 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
         container.refreshSignals.tryEmit(Unit)
     }
 
-    fun setupMessage(message: String) { channel.trySend(UiEvent.Message(message)) }
+    fun setupMessage(message: String, kind: FeedbackKind = FeedbackKind.INFO) { channel.trySend(UiEvent.Message(message, kind)) }
 
     fun beginDraft(kind: RuleKind, context: LifeContext = LifeContext.STUDY, rule: Rule? = null): Boolean {
         if (!_state.value.draftLoaded || _state.value.busy) return false
         val saved = rule?.let { candidate -> _state.value.rules.firstOrNull { it.id == candidate.id } }
         if (saved != null && CommitmentPolicy.isLocked(saved, container.clock())) {
-            channel.trySend(UiEvent.Message("This commitment cannot be edited before its confirmed end."))
+            channel.trySend(UiEvent.Message("This commitment cannot be edited before its confirmed end.", FeedbackKind.WARNING))
             return false
         }
         val next = if (rule != null) RuleDraft(rule.id, rule.name, rule.context, rule.kind, rule.packages.toSet(),
@@ -381,30 +384,37 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
                 container.runtime.first { key in it.configuredKeys || !it.connected || it.error != null }
             }?.let { it.connected && it.error == null && key in it.configuredKeys } == true
         }
-        channel.send(UiEvent.Saved(when {
+        val message = when {
             !saved -> "Review the waiting period to confirm this change."
             asDraft -> "Routine saved. Turn it on when you are ready."
             !acknowledged || !configured -> "Saved. Review app protection to confirm blocking."
             rule.kind == RuleKind.QUICK_BLOCK -> "Session locked until its confirmed end."
             rule.enabled -> "Routine saved. Its commitment is locked."
             else -> "Routine changes saved. It is still off."
-        }, if (!saved) rule.id else null))
+        }
+        val kind = if (!saved || !acknowledged || !configured) FeedbackKind.WARNING else FeedbackKind.SUCCESS
+        channel.send(UiEvent.Saved(message, if (!saved) rule.id else null, kind))
+        if (saved && rule.enabled && configured && acknowledged && !container.preferences.getBoolean("widget_prompted", false)) {
+            container.preferences.edit { putBoolean("widget_prompted", true) }
+            if (WidgetPinning.count(getApplication()) == 0) channel.send(UiEvent.WidgetSuggestion)
+        }
     }
 
     fun setEnabled(rule: Rule, enabled: Boolean) = action {
         if (enabled) container.protection.requireReady()
         val saved = repository.setEnabled(rule.id, enabled, container.clock())
         reschedule()
-        channel.send(UiEvent.Message(if (saved) if (enabled) "Protection turned on." else "Selected protection ended. Other routines still apply." else "A change has been requested. Confirm it after the wait."))
+        channel.send(UiEvent.Message(if (saved) if (enabled) "Protection turned on." else "Selected protection ended. Other routines still apply." else "A change has been requested. Confirm it after the wait.",
+            if (saved) FeedbackKind.SUCCESS else FeedbackKind.WARNING))
     }
 
-    fun confirmChange(id: String) = action { repository.confirmChange(id, container.clock()); reschedule(); channel.send(UiEvent.Message("Your change was applied.")) }
+    fun confirmChange(id: String) = action { repository.confirmChange(id, container.clock()); reschedule(); channel.send(UiEvent.Message("Your change was applied.", FeedbackKind.SUCCESS)) }
     fun cancelChange(id: String) = action { repository.cancelChange(id) }
     fun deleteData() = action {
         repository.deleteAll(container.clock())
         val cleared = editCheckpoint { it.copy(draft = null, settingsReturn = null, saving = false, hasEdits = false) }
         container.draftStore.write(cleared)
-        reschedule(); channel.send(UiEvent.Saved("Local plans and history deleted."))
+        reschedule(); channel.send(UiEvent.Saved("Local plans and history deleted.", kind = FeedbackKind.SUCCESS))
     }
     fun acceptManagedProtection() = action {
         withContext(Dispatchers.IO) {
@@ -425,7 +435,7 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     fun removeManagement() = action {
         container.managed.removeManagement()
         refresh()
-        channel.send(UiEvent.Message("Managed setup removed. Your saved routines are off."))
+        channel.send(UiEvent.Message("Managed setup removed. Your saved routines are off.", FeedbackKind.SUCCESS))
     }
 
     private suspend fun reschedule() {
@@ -438,7 +448,7 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
         viewModelScope.launch {
             try { block() } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                channel.send(UiEvent.Message(error.message ?: "The change could not be saved. Try again."))
+                channel.send(UiEvent.Message(error.message ?: "The change could not be saved. Try again.", FeedbackKind.ERROR))
             }
             finally { _state.update { it.copy(busy = false) } }
         }

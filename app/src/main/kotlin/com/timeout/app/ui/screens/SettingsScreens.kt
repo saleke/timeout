@@ -11,16 +11,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.timeout.app.BuildConfig
 import com.timeout.app.ProtectionMode
 import com.timeout.app.R
+import com.timeout.app.enforcement.AccessibilitySetupLauncher
 import com.timeout.app.data.DraftScreen
 import com.timeout.app.ui.*
+import com.timeout.app.widget.WidgetPinning
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +36,7 @@ fun SetupScreen(vm: TimeOutViewModel, state: AppUiState, fromDraft: Boolean, onB
     var help by rememberSaveable { mutableStateOf(false) }
 
     fun openSettings() {
-        runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        runCatching { AccessibilitySetupLauncher.open(context) }
             .onFailure { vm.cancelSettingsHandoff(); vm.setupMessage("Open Android Settings → Accessibility → Timeout app protection.") }
     }
     fun appInfo() {
@@ -99,14 +103,30 @@ private fun StatusLine(label: String, value: String) {
 
 @Composable
 fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, onSetup: () -> Unit, onAbout: () -> Unit) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val appearance by vm.container.appearance.collectAsStateWithLifecycle()
     val reducedMotion by vm.container.reducedMotion.collectAsStateWithLifecycle()
     var delete by rememberSaveable { mutableStateOf(false) }
     var removeManagement by rememberSaveable { mutableStateOf(false) }
     val locked = state.lockedRules
+    var widgetCount by remember { mutableIntStateOf(WidgetPinning.count(context)) }
+    LifecycleResumeEffect(Unit) {
+        widgetCount = WidgetPinning.count(context)
+        onPauseOrDispose { }
+    }
     DetailScaffold("Settings", onBack) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             item(key = "protection") { ActionRow("App protection", if (state.protectionReady) "On" else "Set up blocking", R.drawable.ic_shield, onSetup) }
+            item(key = "quick-access") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionTitle("Quick access")
+                    ActionRow("Home-screen widget", if (widgetCount > 0) "$widgetCount added · add another" else "Add quick block to Home",
+                        R.drawable.ic_brand_mark, {
+                            if (!WidgetPinning.request(context)) vm.setupMessage("Open your launcher's widget picker and choose Timeout.")
+                        })
+                }
+            }
             item(key = "appearance") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionTitle("Appearance")
@@ -131,7 +151,23 @@ fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, 
                 }
             }
             item(key = "about") { ActionRow("How protection works", "Capabilities and privacy", R.drawable.ic_info, onAbout) }
-            item(key = "version") { Text("Timeout ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item(key = "developer") {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Timeout ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+                    Text("Built by Saleke", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            "Website" to "https://saleke.is-a.dev",
+                            "GitHub" to "https://github.com/saleke/timeout",
+                            "Privacy" to "https://github.com/saleke/timeout/blob/main/PRIVACY.md",
+                            "Support" to "https://github.com/saleke/timeout/issues",
+                        ).forEach { (label, url) ->
+                            TextButton({ runCatching { uriHandler.openUri(url) }.onFailure { vm.setupMessage("Could not open $label.", FeedbackKind.ERROR) } },
+                                Modifier.heightIn(min = 48.dp)) { Text(label) }
+                        }
+                    }
+                }
+            }
         }
     }
     if (delete) AlertDialog(onDismissRequest = { delete = false }, title = { Text("Delete plans and history?") },

@@ -62,17 +62,25 @@ class TimeoutWidgetProvider : AppWidgetProvider() {
                 AppCatalog(context).load().filter { it.packageName in active }.associateBy { it.packageName }
             }
             ids.forEach { id ->
-                val minimumWidth = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
-                val wide = minimumWidth >= 250
-                val views = RemoteViews(context.packageName, if (wide) R.layout.widget_timeout_wide else R.layout.widget_timeout_compact)
-                views.setTextViewText(R.id.widget_status, status)
-                views.setTextViewText(R.id.widget_action, if (active.isEmpty()) "Pause an app" else "Pause another")
+                val options = manager.getAppWidgetOptions(id)
+                val minimumWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
+                val minimumHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT)
+                val icon = minimumWidth < 120 || minimumHeight < 90
+                val wide = !icon && minimumWidth >= 250
+                val views = RemoteViews(context.packageName, when { icon -> R.layout.widget_timeout_icon; wide -> R.layout.widget_timeout_wide; else -> R.layout.widget_timeout_compact })
                 val intent = Intent(context, QuickBlockActivity::class.java).setAction("com.timeout.app.QUICK_BLOCK")
                     .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                 val click = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                 views.setOnClickPendingIntent(R.id.widget_action, click)
                 views.setOnClickPendingIntent(R.id.widget_root, click)
                 views.setContentDescription(R.id.widget_action, "Open Timeout quick block")
+                if (icon) {
+                    views.setImageViewResource(R.id.widget_status_dot, when { !ready -> R.drawable.widget_dot_setup; active.isNotEmpty() -> R.drawable.widget_dot_active; else -> R.drawable.widget_dot_ready })
+                    views.setContentDescription(R.id.widget_root, "Timeout quick block. $status")
+                } else {
+                    views.setTextViewText(R.id.widget_status, status)
+                    views.setTextViewText(R.id.widget_action, if (active.isEmpty()) "Pause an app" else "Pause another")
+                }
                 if (wide) {
                     val targets = intArrayOf(R.id.widget_app_1, R.id.widget_app_2, R.id.widget_app_3)
                     val showApps = active.isNotEmpty() && minimumWidth >= 430
