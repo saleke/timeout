@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal" android:gravity="center_vertical" android:background="@drawable/widget_background"
+    android:paddingHorizontal="14dp" android:paddingVertical="8dp">
+    <ImageView android:layout_width="42dp" android:layout_height="42dp" android:src="@drawable/ic_logo_foreground_3d"
+        android:scaleType="fitCenter" android:contentDescription="@null" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:orientation="vertical" android:gravity="center_vertical" android:layout_marginStart="10dp">
+        <TextView android:id="@+id/widget_action" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/widget_pause_app" android:textColor="@color/widget_on_surface" android:textStyle="bold"
+            android:textSize="14sp" android:maxLines="1" />
+        <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="2dp" android:text="@string/widget_ready" android:textColor="@color/widget_secondary"
+            android:textSize="12sp" android:maxLines="1" />
+    </LinearLayout>
+</LinearLayout>

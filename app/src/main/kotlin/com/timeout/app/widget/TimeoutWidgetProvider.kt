@@ -65,9 +65,15 @@ class TimeoutWidgetProvider : AppWidgetProvider() {
                 val options = manager.getAppWidgetOptions(id)
                 val minimumWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
                 val minimumHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT)
-                val icon = minimumWidth < 120 || minimumHeight < 90
-                val wide = !icon && minimumWidth >= 250
-                val views = RemoteViews(context.packageName, when { icon -> R.layout.widget_timeout_icon; wide -> R.layout.widget_timeout_wide; else -> R.layout.widget_timeout_compact })
+                val icon = minimumWidth < 110
+                val bar = !icon && minimumHeight < 90
+                val wide = !icon && !bar && minimumWidth >= 250
+                val views = RemoteViews(context.packageName, when {
+                    icon -> R.layout.widget_timeout_icon
+                    bar -> R.layout.widget_timeout_bar
+                    wide -> R.layout.widget_timeout_wide
+                    else -> R.layout.widget_timeout_compact
+                })
                 val intent = Intent(context, QuickBlockActivity::class.java).setAction("com.timeout.app.QUICK_BLOCK")
                     .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                 val click = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

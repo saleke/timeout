@@ -77,9 +77,9 @@ The quick-block widget lets you create a block without opening the full app:
 4. Choose a duration.
 5. Confirm the exact end.
 
-The widget adapts between compact and wide layouts, shows active status, and can display current app icons when the launcher gives it enough space.
+The default widget is a low 2x1 quick-action bar: twice an app-icon width while keeping a one-cell height. It can be resized down to an icon or expanded into compact and wide status layouts.
 
-Android launchers do not allow ordinary widgets to accept another app icon as a package drop target, so Timeout uses a reliable tap-to-select flow instead of pretending launcher drag-and-drop is supported.
+Its sheet opens partially over Home, puts recent apps first, and keeps search plus a short app list within easy reach. App selection moves directly to duration and exact-end confirmation.
 
 ## Built For Interrupted Setup
 
@@ -126,7 +126,7 @@ This APK is distributed through GitHub while the Google Play release is being pr
 ### Verify The Download
 
 ```text
-SHA-256: 86d04f2e9d6eea405b9e7bd22a8c6d82a67d3ef68f68d68ddf9574fa2d273658
+SHA-256: 3b3502ab241880c59820a244c5dde7b89dd7a4233fe490ae64aa59016d111633
 ```
 
 ## First Block Setup
