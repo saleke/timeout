@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.timeout.app.BuildConfig
 import com.timeout.app.ProtectionMode
 import com.timeout.app.R
+import com.timeout.app.data.DraftScreen
 import com.timeout.app.ui.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -32,18 +33,18 @@ fun SetupScreen(vm: TimeOutViewModel, state: AppUiState, fromDraft: Boolean, onB
 
     fun openSettings() {
         runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-            .onFailure { vm.setupMessage("Open Android Settings → Accessibility → Time Out app protection.") }
+            .onFailure { vm.cancelSettingsHandoff(); vm.setupMessage("Open Android Settings → Accessibility → Timeout app protection.") }
     }
     fun appInfo() {
         runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())) }
-            .onFailure { vm.setupMessage("Open Time Out's app info in Android Settings.") }
+            .onFailure { vm.cancelSettingsHandoff(); vm.setupMessage("Open Timeout's app info in Android Settings.") }
     }
 
     DetailScaffold("App protection", onBack, bottom = {
         BottomAction {
             if (state.protectionReady) MainButton(if (fromDraft) "Continue" else "Done", onBack, icon = R.drawable.ic_check)
             else MainButton(if (state.accessibilityEnabled) "Open Android settings" else "Enable app blocking", {
-                if (state.disclosureAccepted) openSettings() else disclosure = true
+                if (state.disclosureAccepted) vm.openSettings(fromDraft, DraftScreen.BUILDER) { if (active) openSettings() } else disclosure = true
             }, busy = state.busy, icon = R.drawable.ic_shield)
             if (fromDraft && draft.kind != com.timeout.core.RuleKind.QUICK_BLOCK && !state.protectionReady)
                 TextButton({ vm.saveDraft(asDraft = true) }, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Save routine for later") }
@@ -56,7 +57,7 @@ fun SetupScreen(vm: TimeOutViewModel, state: AppUiState, fromDraft: Boolean, onB
                 Text(if (state.protectionReady) "Ready to block." else "Turn on app blocking.", style = MaterialTheme.typography.headlineLarge)
                 Spacer(Modifier.height(12.dp))
                 Text(if (state.protectionReady) "Return to your plan to start."
-                    else "Enable Time Out app protection in Android's accessibility settings.",
+                    else "Enable Timeout app protection in Android's accessibility settings.",
                     style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item(key = "status") {
@@ -75,14 +76,14 @@ fun SetupScreen(vm: TimeOutViewModel, state: AppUiState, fromDraft: Boolean, onB
     }
     if (disclosure) AlertDialog(onDismissRequest = { disclosure = false },
         title = { Text("Allow app protection?") },
-        text = { Text("Time Out uses Android's AccessibilityService API to detect selected apps opening and show your blocking screen. It does not read screen text or messages. Your plans stay on this device.") },
-        confirmButton = { TextButton({ disclosure = false; vm.acceptStandardProtection { if (active) openSettings() } }) { Text("Continue to Android") } },
+        text = { Text("Timeout uses Android's AccessibilityService API to detect selected apps opening and show your blocking screen. It does not read screen text or messages. Your plans stay on this device.") },
+        confirmButton = { TextButton({ disclosure = false; vm.acceptStandardProtection(fromDraft) { if (active) openSettings() } }) { Text("Continue to Android") } },
         dismissButton = { TextButton({ disclosure = false }) { Text("Not now") } })
     if (help) ModalBottomSheet(onDismissRequest = { help = false }) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Restricted settings", style = MaterialTheme.typography.titleLarge)
-            Text("For a downloaded APK, Android may require App info → menu → Allow restricted settings. Then return to Accessibility and turn on Time Out.")
-            MainButton("Open app info", { help = false; appInfo() })
+            Text("For a downloaded APK, Android may require App info → menu → Allow restricted settings. Then return to Accessibility and turn on Timeout.")
+            MainButton("Open app info", { help = false; vm.openSettings(fromDraft, DraftScreen.SETUP) { if (active) appInfo() } })
             Spacer(Modifier.height(8.dp))
         }
     }
@@ -109,11 +110,8 @@ fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, 
             item(key = "appearance") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionTitle("Appearance")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (value, title) ->
-                            FilterChip(appearance == value, { vm.container.setAppearance(value) }, label = { Text(title) })
-                        }
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption("system", "System"), ChoiceOption("light", "Light"), ChoiceOption("dark", "Dark")),
+                        setOf(appearance), vm.container::setAppearance)
                     Row(Modifier.fillMaxWidth().toggleable(reducedMotion, role = Role.Switch, onValueChange = vm.container::setReducedMotion).padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Reduce page motion", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -133,7 +131,7 @@ fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, 
                 }
             }
             item(key = "about") { ActionRow("How protection works", "Capabilities and privacy", R.drawable.ic_info, onAbout) }
-            item(key = "version") { Text("Time Out ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item(key = "version") { Text("Timeout ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
     if (delete) AlertDialog(onDismissRequest = { delete = false }, title = { Text("Delete plans and history?") },
@@ -141,7 +139,7 @@ fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, 
         confirmButton = { TextButton({ delete = false; vm.deleteData() }, enabled = locked.isEmpty()) { Text("Delete") } },
         dismissButton = { TextButton({ delete = false }) { Text("Cancel") } })
     if (removeManagement) AlertDialog(onDismissRequest = { removeManagement = false }, title = { Text("Remove test management?") },
-        text = { Text("Unlocked routines will stop. Time Out will release its suspended apps before removing test-device ownership.") },
+        text = { Text("Unlocked routines will stop. Timeout will release its suspended apps before removing test-device ownership.") },
         confirmButton = { TextButton({ removeManagement = false; vm.removeManagement() }, enabled = locked.isEmpty()) { Text("Remove") } },
         dismissButton = { TextButton({ removeManagement = false }) { Text("Cancel") } })
 }
@@ -150,10 +148,10 @@ fun SettingsScreen(vm: TimeOutViewModel, state: AppUiState, onBack: () -> Unit, 
 fun AboutScreen(onBack: () -> Unit) {
     DetailScaffold("How protection works", onBack) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            item { SectionTitle("App-opening blocks"); Spacer(Modifier.height(8.dp)); Text("With accessibility enabled, Time Out shows a blocking screen when a selected app opens. It does not change system volume or pause unrelated audio. This is not OS-level suspension; background audio, other profiles, and alternate apps are not guaranteed to be blocked.") }
-            item { SectionTitle("Your commitment"); Spacer(Modifier.height(8.dp)); Text("Sessions have no early-stop action in Time Out. Routine settings unlock on your chosen date. Android permissions and uninstallation remain system controls.") }
+            item { SectionTitle("App-opening blocks"); Spacer(Modifier.height(8.dp)); Text("With accessibility enabled, Timeout shows a blocking screen when a selected app opens. It does not change system volume or pause unrelated audio. This is not OS-level suspension; background audio, other profiles, and alternate apps are not guaranteed to be blocked.") }
+            item { SectionTitle("Your commitment"); Spacer(Modifier.height(8.dp)); Text("Sessions have no early-stop action in Timeout. Routine settings unlock on your chosen date. Android permissions and uninstallation remain system controls.") }
             item { SectionTitle("Overlapping plans"); Spacer(Modifier.height(8.dp)); Text("Every applicable plan must allow access. Each app's clock includes all its sessions and routines. One session finishing may not release an app.") }
-            item { SectionTitle("Essential access"); Spacer(Modifier.height(8.dp)); Text("Calls, system controls, alarms, keyboards, accessibility services, and Time Out are excluded. Keep any authentication, medical, navigation, or communication apps you need available.") }
+            item { SectionTitle("Essential access"); Spacer(Modifier.height(8.dp)); Text("Calls, system controls, alarms, keyboards, accessibility services, and Timeout are excluded. Keep any authentication, medical, navigation, or communication apps you need available.") }
             item { SectionTitle("Privacy"); Spacer(Modifier.height(8.dp)); Text("The accessibility service does not retrieve screen content. Plans and history stay here, with no network permission. History keeps up to 30 days of local actions.") }
             item { SectionTitle("Existing managed installations"); Spacer(Modifier.height(8.dp)); Text("Already provisioned device-owner installations can retain their package-suspension backend and finite native release. Managed provisioning is not needed for normal app-opening blocks.") }
         }

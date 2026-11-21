@@ -9,6 +9,7 @@ import com.timeout.app.MainActivity
 import com.timeout.app.TimeOutApplication
 import com.timeout.core.*
 import com.timeout.app.data.AppCatalog
+import com.timeout.app.widget.TimeoutWidgetProvider
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,6 +29,7 @@ class AppBlockingService : AccessibilityService() {
     @Volatile private var foreground: String? = null
     @Volatile private var nextBoundary: Long? = null
     private var keyboards = emptySet<String>()
+    private var widgetPackages = emptySet<String>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -68,6 +70,11 @@ class AppBlockingService : AccessibilityService() {
             val snapshot = container.repository.snapshot()
             check(snapshot.unreadable == 0) { "Some saved plans need repair." }
             nextBoundary = RuleEngine.nextBoundary(snapshot.rules, now)
+            val activePackages = PolicyOverview.evaluate(snapshot.rules, now).decisions.filterValues { it.restricted }.keys
+            if (activePackages != widgetPackages) {
+                widgetPackages = activePackages
+                TimeoutWidgetProvider.updateAll(this@AppBlockingService, snapshot.rules)
+            }
             if (!container.protection.usesManaged()) BoundaryScheduler.schedule(this, snapshot.rules, now)
             val accepted = container.preferences.getBoolean("standard_disclosure", false)
             container.standardRuntime.update { it.copy(configurationLoaded = accepted, checkedAt = now.wallTime,

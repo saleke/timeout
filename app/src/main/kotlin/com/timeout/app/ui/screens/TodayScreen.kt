@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -25,7 +26,8 @@ import java.time.format.DateTimeFormatter
 
 @Composable
 fun TodayScreen(state: AppUiState, clock: StateFlow<ClockSnapshot>, onBlock: (LifeContext) -> Unit,
-    onRoutine: (LifeContext) -> Unit, onProtection: () -> Unit, onSetup: () -> Unit, onRule: (Rule) -> Unit, onApp: (String) -> Unit) {
+    onRoutine: (LifeContext) -> Unit, onProtection: () -> Unit, onSetup: () -> Unit, onRule: (Rule) -> Unit, onApp: (String) -> Unit,
+    pendingDraft: RuleDraft? = null, onResumeDraft: () -> Unit = {}, onDiscardDraft: () -> Unit = {}) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val listState = rememberLazyListState()
@@ -39,12 +41,19 @@ fun TodayScreen(state: AppUiState, clock: StateFlow<ClockSnapshot>, onBlock: (Li
     }
     val commitments = remember(policy) { policy.sourceRules.filter { it.id in policy.activeRuleIds || it.id in policy.lockedRuleIds } }
     val healthy = state.protectionReady && state.configurationCurrent
+    var discard by rememberSaveable { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize(), state = listState,
         contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(key = "date", contentType = "date") {
             Text(state.clock.wallTime.inZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", locale)),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (pendingDraft != null) item(key = "draft", contentType = "draft") {
+            ActionRow("Continue draft", "${appCount(pendingDraft.packages.size)} · ${if (pendingDraft.kind == RuleKind.QUICK_BLOCK) "Session" else "Routine"}",
+                R.drawable.ic_edit, onResumeDraft, trailing = {
+                    IconButton({ discard = true }) { Symbol(R.drawable.ic_delete, description = "Discard draft") }
+                })
         }
         if ((!state.protectionReady && state.rules.any { it.enabled }) || state.error != null) item(key = "health", contentType = "notice") {
             val colors = LocalSupportingColors.current
@@ -134,4 +143,8 @@ fun TodayScreen(state: AppUiState, clock: StateFlow<ClockSnapshot>, onBlock: (Li
         item(key = "bedtime", contentType = "preset") { ActionRow("Bedtime", "Let your evening wind down", R.drawable.ic_bedtime, { onRoutine(LifeContext.BEDTIME) }) }
         item(key = "personal", contentType = "preset") { ActionRow("Personal", "Time for something of your own", R.drawable.ic_shield, { onRoutine(LifeContext.PERSONAL) }) }
     }
+    if (discard && pendingDraft != null) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard this draft?") },
+        text = { Text("Your active sessions and routines will stay unchanged.") },
+        confirmButton = { TextButton({ discard = false; onDiscardDraft() }) { Text("Discard") } },
+        dismissButton = { TextButton({ discard = false }) { Text("Keep") } })
 }

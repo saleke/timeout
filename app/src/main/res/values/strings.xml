@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Time Out</string>
-    <string name="app_protection_label">Time Out app protection</string>
+    <string name="app_name">Timeout</string>
+    <string name="app_protection_label">Timeout app protection</string>
     <string name="app_protection_description">Detects selected apps opening and shows your blocking screen. Does not read screen text or messages. Rules stay on this device.</string>
+    <string name="widget_description">Start a quick block and see current app limits.</string>
+    <string name="widget_ready">Ready</string>
+    <string name="widget_pause_app">Pause an app</string>
 </resources>

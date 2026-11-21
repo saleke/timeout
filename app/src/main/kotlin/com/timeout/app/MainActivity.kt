@@ -19,12 +19,14 @@ import com.timeout.app.ui.theme.TimeOutTheme
 
 class MainActivity : ComponentActivity() {
     private var protectionSignal by mutableLongStateOf(0)
+    private var draftSignal by mutableLongStateOf(0)
     private val container get() = (application as TimeOutApplication).container
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (intent.getBooleanExtra("open_protection", false)) protectionSignal = System.nanoTime()
+        if (intent.getBooleanExtra("open_draft", false)) draftSignal = System.nanoTime()
         setContent {
             val appearance by container.appearance.collectAsStateWithLifecycle()
             val dark = when (appearance) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
@@ -34,7 +36,7 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
             val vm: TimeOutViewModel = viewModel()
-            TimeOutTheme(appearance) { TimeOutApp(vm, protectionSignal) }
+            TimeOutTheme(appearance) { TimeOutApp(vm, protectionSignal, draftSignal) }
         }
     }
 
@@ -47,5 +49,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra("open_protection", false)) protectionSignal = System.nanoTime()
+        if (intent.getBooleanExtra("open_draft", false)) draftSignal = System.nanoTime()
     }
 }

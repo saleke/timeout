@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.view.accessibility.AccessibilityManager
 import com.timeout.app.AppContainer
+import com.timeout.app.widget.TimeoutWidgetProvider
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -34,15 +35,17 @@ class ProtectionCoordinator(private val container: AppContainer) {
 
     suspend fun reconcile() {
         container.repository.completeExpired(container.clock())
+        val rules = container.repository.snapshot().rules
         if (usesManaged()) container.managed.reconcile()
-        else BoundaryScheduler.schedule(container.application, container.repository.snapshot().rules, container.clock())
+        else BoundaryScheduler.schedule(container.application, rules, container.clock())
+        TimeoutWidgetProvider.updateAll(container.application, rules)
         container.refreshSignals.tryEmit(Unit)
     }
 
     suspend fun requireReady() {
         if (usesManaged()) { container.managed.requireReady(); return }
         check(disclosureAccepted()) { "Review app protection setup first." }
-        check(accessibilityEnabled()) { "Turn on Time Out in Android Accessibility settings." }
+        check(accessibilityEnabled()) { "Turn on Timeout in Android Accessibility settings." }
         val current = container.standardRuntime.value
         check(current.connected && current.configurationLoaded && current.error == null) {
             current.error ?: "App protection is connecting. If it does not connect, reopen Android Accessibility settings."

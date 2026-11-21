@@ -53,6 +53,8 @@ abstract class GenerateDesignTokens : DefaultTask() {
             }
             appendLine("const val pressScale = ${motion["pressScale"]}f")
             (motion["customEaseOut"] as List<*>).forEachIndexed { index, value -> appendLine("const val easeOut$index = ${value}f") }
+            val choice = (tokens["components"] as Map<*, *>)["choiceGroup"] as Map<*, *>
+            choice.forEach { (name, value) -> appendLine("const val choice${name.toString().replaceFirstChar { it.uppercase() }} = $value") }
             appendLine("}")
         })
         themes.forEach { (name, roles) ->
@@ -96,8 +98,8 @@ android {
         applicationId = "com.timeout.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.4.0"
         buildConfigField("boolean", "ALLOW_TEST_DEVICE_REMOVAL", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

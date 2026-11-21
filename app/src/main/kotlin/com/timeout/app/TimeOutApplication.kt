@@ -6,9 +6,12 @@ import android.provider.Settings
 import androidx.room.Room
 import com.timeout.app.data.RuleRepository
 import com.timeout.app.data.TimeOutDatabase
+import com.timeout.app.data.DraftCheckpointStore
+import com.timeout.app.data.PreferencesDraftCheckpoint
 import com.timeout.app.enforcement.ManagedProtectionController
 import com.timeout.app.enforcement.ProtectionCoordinator
 import com.timeout.app.enforcement.BlockingState
+import com.timeout.app.widget.TimeoutWidgetController
 import com.timeout.core.ClockSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +26,7 @@ class TimeOutApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container.protection.start()
+        container.widgets.start()
     }
 }
 
@@ -31,6 +35,7 @@ class AppContainer(val application: Application) {
     val database = Room.databaseBuilder(application, TimeOutDatabase::class.java, "timeout.db").build()
     val repository = RuleRepository(database)
     val preferences = application.getSharedPreferences("preferences", Application.MODE_PRIVATE)
+    val draftStore = DraftCheckpointStore(PreferencesDraftCheckpoint(application.getSharedPreferences("editor_draft", Application.MODE_PRIVATE)))
     private val _appearance = MutableStateFlow(preferences.getString("appearance", "system") ?: "system")
     val appearance = _appearance.asStateFlow()
     private val _reducedMotion = MutableStateFlow(preferences.getBoolean("reduced_motion", false))
@@ -43,6 +48,7 @@ class AppContainer(val application: Application) {
     private val currentBootCount = Settings.Global.getInt(application.contentResolver, Settings.Global.BOOT_COUNT, -1)
     val managed = ManagedProtectionController(this)
     val protection = ProtectionCoordinator(this)
+    val widgets = TimeoutWidgetController(this)
 
     fun clock() = ClockSnapshot(System.currentTimeMillis(), SystemClock.elapsedRealtime(),
         currentBootCount)

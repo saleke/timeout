@@ -123,7 +123,7 @@ class RuleRepository(private val database: TimeOutDatabase) {
             dao.clearChange(id)
         }
         dao.event(HistoryRecord(UUID.randomUUID().toString(), "Unlocked protection stopped",
-            if (id == null) "All Time Out protection stopped. Saved settings kept." else "Selected protection stopped. Other routines still apply.", clock.wallTime))
+            if (id == null) "All Timeout protection stopped. Saved settings kept." else "Selected protection stopped. Other routines still apply.", clock.wallTime))
     }
 
     suspend fun completeExpired(clock: ClockSnapshot) = database.withTransaction {

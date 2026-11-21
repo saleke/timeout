@@ -52,7 +52,7 @@ class PolicyComplianceActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                             Text("A device for\nstronger boundaries.", style = MaterialTheme.typography.headlineLarge)
-                            Text("Time Out is being provisioned as this device's owner. It uses Android package suspension for the apps and times you explicitly confirm.")
+                            Text("Timeout is being provisioned as this device's owner. It uses Android package suspension for the apps and times you explicitly confirm.")
                             Text("Sessions cannot be stopped before expiry. Routine settings stay locked until your chosen commitment date. During a locked commitment, there is no early-stop, recovery, or data-deletion override.")
                             Text("Essential system access stays available. This app does not use accessibility to read your screen and has no network permission. Your rules stay here.")
                             Text("This development build offers test-device management removal in Settings after all commitments end. Android's production deprovisioning normally involves a device reset. Nothing starts automatically when provisioning finishes.")

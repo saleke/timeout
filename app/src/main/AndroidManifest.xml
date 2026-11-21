@@ -27,6 +27,8 @@
         </activity>
         <activity android:name=".enforcement.BlockingActivity" android:exported="false" android:excludeFromRecents="true"
             android:taskAffinity="com.timeout.app.blocking" android:launchMode="singleTask" />
+        <activity android:name=".enforcement.QuickBlockActivity" android:exported="false" android:excludeFromRecents="true"
+            android:theme="@style/Theme.Timeout.QuickBlock" android:launchMode="singleTop" />
         <service android:name=".enforcement.AppBlockingService" android:exported="true" android:label="@string/app_protection_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
@@ -67,6 +69,10 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
                 <action android:name="android.app.action.DEVICE_OWNER_CHANGED" />
             </intent-filter>
+        </receiver>
+        <receiver android:name=".widget.TimeoutWidgetProvider" android:exported="true" android:label="@string/app_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/timeout_widget_info" />
         </receiver>
     </application>
 </manifest>

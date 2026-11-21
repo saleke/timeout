@@ -190,7 +190,7 @@ class ManagedProtectionController(private val container: AppContainer) {
             // API 34+ getters expose resolved policies from all admins. Set only our own list;
             // copying that resolved list would adopt another admin's unrelated restrictions.
             dpm.setUserControlDisabledPackages(admin, listOf(context.packageName))
-            check(context.packageName in dpm.getUserControlDisabledPackages(admin)) { "Android did not confirm protection against clearing Time Out's data." }
+            check(context.packageName in dpm.getUserControlDisabledPackages(admin)) { "Android did not confirm protection against clearing Timeout's data." }
         } else if (until == null && added) {
             dpm.setUserControlDisabledPackages(admin, emptyList())
             journalPreferences.commitOrThrow("Native self-protection release could not be saved.") {
@@ -207,7 +207,7 @@ class ManagedProtectionController(private val container: AppContainer) {
         container.repository.recover(null, container.clock())
         reconcile()
         mutex.withLock {
-            check(journal.read().isEmpty()) { "Android must confirm release of Time Out-owned apps before management can be removed." }
+            check(journal.read().isEmpty()) { "Android must confirm release of Timeout-owned apps before management can be removed." }
             check(container.repository.snapshot().rules.none { CommitmentPolicy.isLocked(it, container.clock()) }) { "A commitment is still locked." }
             updateSelfGuard(null)
             dpm.clearDeviceOwnerApp(context.packageName)

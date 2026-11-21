@@ -32,7 +32,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.TextStyle
-import java.util.Locale
 
 @Composable
 fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, onBack: () -> Unit, onApps: () -> Unit, onSetup: () -> Unit) {
@@ -50,7 +49,8 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
     DetailScaffold(if (draft.revision > 0) "Edit routine" else if (quick) "Block now" else "Set a routine", onBack,
         bottom = {
             BottomAction {
-                if (draft.packages.isNotEmpty() && error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                if (state.draftPersistenceError != null) Text(state.draftPersistenceError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                else if (draft.packages.isNotEmpty() && error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 else if (draft.packages.isNotEmpty() && !currentPreview) Text("Updating access preview…", style = MaterialTheme.typography.bodyMedium)
                 else if (draft.packages.isNotEmpty() && preview.rule != null) {
                     val rule = preview.rule!!
@@ -89,21 +89,14 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
                 item(key = "duration", contentType = "form") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionTitle("How long?")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(!draft.untilTime, { vm.updateDraft { it.copy(untilTime = false) } }, label = { Text("For a duration") })
-                        FilterChip(draft.untilTime, { vm.updateDraft { it.copy(untilTime = true) } }, label = { Text("Until a time") })
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption("duration", "For a duration"), ChoiceOption("until", "Until a time")),
+                        setOf(if (draft.untilTime) "until" else "duration"), { key -> vm.updateDraft { it.copy(untilTime = key == "until") } }, enabled = !state.busy)
                     if (!draft.untilTime) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(15, 25, 45, 60, 90).forEach { minutes ->
-                                FilterChip(draft.minutes == minutes, { vm.updateDraft { it.copy(minutes = minutes) } }, label = { Text("$minutes min") })
-                            }
-                        }
+                        AdaptiveChoices(listOf(15, 25, 45, 60, 90).map { ChoiceOption(it.toString(), "$it min") },
+                            setOf(draft.minutes.toString()), { key -> vm.updateDraft { it.copy(minutes = key.toInt()) } }, enabled = !state.busy)
                         DurationButton(draft.minutes) { value -> vm.updateDraft { it.copy(minutes = value) } }
                     } else {
-                        EndTimeButton(draft.untilMinute, draft.untilTomorrow) { minute, tomorrow ->
-                            vm.updateDraft { it.copy(untilMinute = minute, untilTomorrow = tomorrow) }
-                        }
+                        EndTimeButton(draft.untilMinute, draft.untilTomorrow, draft.untilDateEpochDay, vm::chooseUntil)
                     }
                 }
                 }
@@ -111,10 +104,8 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
                 item(key = "mode", contentType = "form") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionTitle("How should it work?")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(draft.kind == RuleKind.BLOCK_DURING, { vm.updateDraft { it.copy(kind = RuleKind.BLOCK_DURING) } }, label = { Text("Protect these hours") })
-                        FilterChip(draft.kind == RuleKind.ALLOW_ONLY, { vm.updateDraft { it.copy(kind = RuleKind.ALLOW_ONLY) } }, label = { Text("Only allow these hours") })
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption(RuleKind.BLOCK_DURING.name, "Protect these hours"), ChoiceOption(RuleKind.ALLOW_ONLY.name, "Only allow these hours")),
+                        setOf(draft.kind.name), { key -> vm.updateDraft { it.copy(kind = RuleKind.valueOf(key)) } }, enabled = !state.busy)
                     Text(if (draft.kind == RuleKind.BLOCK_DURING) "Selected apps are blocked during these periods. Outside them, this routine adds no restriction."
                         else "Selected apps are available only during these windows on the days you choose.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -137,12 +128,9 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
                 } }
                 item(key = "days", contentType = "form") { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionTitle("Repeat on")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        (1..7).forEach { day ->
-                            FilterChip(day in draft.days, { vm.updateDraft { it.copy(days = if (day in it.days) it.days - day else it.days + day) } },
-                                label = { Text(DayOfWeek.of(day).getDisplayName(TextStyle.SHORT, locale)) })
-                        }
-                    }
+                    AdaptiveChoices((1..7).map { ChoiceOption(it.toString(), DayOfWeek.of(it).getDisplayName(TextStyle.SHORT, locale)) },
+                        draft.days.map { it.toString() }.toSet(), { key -> val day = key.toInt(); vm.updateDraft { it.copy(days = if (day in it.days) it.days - day else it.days + day) } },
+                        multiple = true, enabled = !state.busy)
                     TextButton({ vm.updateDraft { it.copy(days = if (it.days.size == 7) (1..5).toSet() else (1..7).toSet()) } }) {
                         Text(if (draft.days.size == 7) "Use weekdays" else "Use every day")
                     }
@@ -152,7 +140,7 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
             item(key = "commitment", contentType = "form") { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SectionTitle(if (quick) "Locked until your timer ends" else "Choose your commitment")
                 if (!quick) CommitmentDateButton(draft) { epochDay -> vm.updateDraft { it.copy(commitmentDateEpochDay = epochDay) } }
-                Text(if (quick) "No early stop in Time Out."
+                Text(if (quick) "No early stop in Timeout."
                     else "Editable after this date. The routine keeps running.",
                     style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
@@ -184,7 +172,7 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
                                 Text(app?.label ?: access.packageName, style = MaterialTheme.typography.titleMedium)
                                 val next = decision.nextAccessAt
                                 Text(when {
-                                    !decision.restricted -> "Time Out would allow access now."
+                                     !decision.restricted -> "Timeout would allow access now."
                                     next != null -> "Planned access: ${dateLabel(context, next)}, ${timeLabel(context, next)}"
                                     else -> "These plans leave no shared access window in the next two weeks. Review the overlap."
                                 }, style = MaterialTheme.typography.bodyMedium, color = if (decision.restricted && next == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -207,7 +195,7 @@ fun RuleEditorScreen(vm: TimeOutViewModel, state: AppUiState, draft: RuleDraft, 
                     Text("${if (quick) "Session ends" else "Settings unlock"} ${dateLabel(context, end)}, ${timeLabel(context, end)}.")
                     Text("Apps: ${draft.packages.joinToString { name -> state.apps.firstOrNull { it.packageName == name }?.label ?: name }}")
                     if (!quick) Text(ruleSummary(context, rule))
-                    Text("No early stop or edits in Time Out.")
+                    Text("No early stop or edits in Timeout.")
                 }
             },
             confirmButton = { TextButton({ confirmCommitment = false; vm.saveDraft() }, enabled = currentPreview && error == null && !state.busy) { Text("Lock and start") } },
@@ -223,11 +211,8 @@ private fun CommitmentDateButton(draft: RuleDraft, onChange: (Long) -> Unit) {
     val context = LocalContext.current
     val end = LocalDate.ofEpochDay(draft.commitmentDateEpochDay).atStartOfDay(zone).toInstant().toEpochMilli()
     var show by rememberSaveable { mutableStateOf(false) }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(7L, 14L, 30L).forEach { days ->
-            FilterChip(draft.commitmentDateEpochDay == today.plusDays(days).toEpochDay(), { onChange(today.plusDays(days).toEpochDay()) }, label = { Text("$days days") })
-        }
-    }
+    AdaptiveChoices(listOf(7L, 14L, 30L).map { ChoiceOption(today.plusDays(it).toEpochDay().toString(), "$it days") },
+        setOf(draft.commitmentDateEpochDay.toString()), { onChange(it.toLong()) })
     OutlinedButton({ show = true }, Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
         Symbol(R.drawable.ic_calendar_today, tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(8.dp))
@@ -295,32 +280,52 @@ private fun DurationButton(minutes: Int, onChange: (Int) -> Unit) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun EndTimeButton(minute: Int, tomorrow: Boolean, onChange: (Int, Boolean) -> Unit) {
+private fun EndTimeButton(minute: Int, tomorrow: Boolean, dateEpochDay: Long?, onChange: (Int, Boolean) -> Unit) {
     val context = LocalContext.current
+    val today = LocalDate.now()
+    val selectedDate = dateEpochDay?.let(LocalDate::ofEpochDay)
+    val dayLabel = when (selectedDate) {
+        null -> "Choose date"
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        else -> dateLabel(context, selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+    }
     var show by rememberSaveable { mutableStateOf(false) }
     OutlinedButton({ show = true }, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
         Symbol(R.drawable.ic_schedule, tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(8.dp)); Text("${if (tomorrow) "Tomorrow" else "Today"} · ${minuteLabel(context, minute)}")
+        Spacer(Modifier.width(8.dp)); Text("$dayLabel · ${minuteLabel(context, minute)}")
     }
     if (show) {
         val picker = rememberTimePickerState(initialHour = minute / 60, initialMinute = minute % 60, is24Hour = DateFormat.is24HourFormat(context))
         val configuration = LocalConfiguration.current
         var input by rememberSaveable { mutableStateOf(configuration.fontScale > 1.3f) }
-        var nextDay by rememberSaveable(tomorrow) { mutableStateOf(tomorrow) }
+        var nextDay by rememberSaveable(dateEpochDay, tomorrow) { mutableStateOf(if (selectedDate != null) selectedDate == today.plusDays(1) else tomorrow) }
+        var attemptedError by remember { mutableStateOf<String?>(null) }
+        fun endError(): String? {
+            val end = LocalDate.now().plusDays(if (nextDay) 1 else 0).atStartOfDay().plusMinutes((picker.hour * 60 + picker.minute).toLong())
+                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val remaining = end - System.currentTimeMillis()
+            return when { remaining <= 0 -> "Choose a future time."; remaining > 86_400_000 -> "Choose an end in the next 24 hours."; else -> null }
+        }
+        val issue = attemptedError ?: endError()
+        LaunchedEffect(picker.hour, picker.minute, nextDay) { attemptedError = null }
         Dialog(onDismissRequest = { show = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.padding(16.dp).widthIn(max = 440.dp).fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
                 Column(Modifier.heightIn(max = 640.dp).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Ends at", style = MaterialTheme.typography.titleLarge, modifier = Modifier.fillMaxWidth())
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(!nextDay, { nextDay = false }, label = { Text("Today") })
-                        FilterChip(nextDay, { nextDay = true }, label = { Text("Tomorrow") })
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption("today", "Today"), ChoiceOption("tomorrow", "Tomorrow")),
+                        setOf(if (nextDay) "tomorrow" else "today"), { nextDay = it == "tomorrow" })
                     if (input) TimeInput(picker) else TimePicker(picker)
+                    issue?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton({ input = !input }) { Text(if (input) "Use clock" else "Type time") }
                         Row {
                             TextButton({ show = false }) { Text("Cancel") }
-                            TextButton({ onChange(picker.hour * 60 + picker.minute, nextDay); show = false }) { Text("Set end") }
+                            TextButton({
+                                val currentError = endError()
+                                if (currentError == null) { onChange(picker.hour * 60 + picker.minute, nextDay); show = false }
+                                else attemptedError = currentError
+                            }, enabled = issue == null) { Text("Set end") }
                         }
                     }
                 }
@@ -359,15 +364,11 @@ private fun TimeWindowButton(window: TimeWindow, index: Int, onChange: (TimeWind
                 Column(Modifier.heightIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Edit window ${index + 1}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.fillMaxWidth())
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(editingStart, { editingStart = true }, label = { Text("Start · ${minuteLabel(context, startMinute)}") })
-                        FilterChip(!editingStart, { editingStart = false }, label = { Text("End · ${minuteLabel(context, endMinute)}") })
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption("start", "Start · ${minuteLabel(context, startMinute)}"), ChoiceOption("end", "End · ${minuteLabel(context, endMinute)}")),
+                        setOf(if (editingStart) "start" else "end"), { editingStart = it == "start" })
                     if (input) TimeInput(if (editingStart) start else end) else TimePicker(if (editingStart) start else end)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(!nextDay, { nextDay = false }, label = { Text("Same day") })
-                        FilterChip(nextDay, { nextDay = true }, label = { Text("Next day") })
-                    }
+                    AdaptiveChoices(listOf(ChoiceOption("same", "Same day"), ChoiceOption("next", "Next day")),
+                        setOf(if (nextDay) "next" else "same"), { nextDay = it == "next" })
                     Text(if (valid) durationLabel(duration) else if (!nextDay) "End must be after start, or choose Next day."
                         else "A window cannot exceed 24 hours.",
                         style = MaterialTheme.typography.bodyMedium,

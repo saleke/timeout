@@ -12,6 +12,10 @@ import com.timeout.app.data.HistoryRecord
 import com.timeout.app.data.InstalledApp
 import com.timeout.app.data.commitOrThrow
 import com.timeout.app.data.PendingChange
+import com.timeout.app.data.DraftCheckpoint
+import com.timeout.app.data.DraftScreen
+import com.timeout.app.data.restoredDraftCheckpoint
+import com.timeout.app.data.reconcileSavedRules
 import com.timeout.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -24,37 +28,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.time.LocalDate
-import java.time.ZoneId
-import java.util.UUID
 import kotlin.math.abs
-
-@Serializable
-data class RuleDraft(
-    val id: String = UUID.randomUUID().toString(),
-    val name: String = "",
-    val context: LifeContext = LifeContext.STUDY,
-    val kind: RuleKind = RuleKind.QUICK_BLOCK,
-    val packages: Set<String> = emptySet(),
-    val minutes: Int = 45,
-    val untilTime: Boolean = false,
-    val untilMinute: Int = 17 * 60,
-    val untilTomorrow: Boolean = false,
-    val days: Set<Int> = (1..7).toSet(),
-    val windows: List<TimeWindow> = listOf(TimeWindow(9 * 60, 17 * 60)),
-    val commitment: Commitment = Commitment.LOCKED,
-    val createdAt: Long = 0,
-    val revision: Long = 0,
-    val zoneId: String = ZoneId.systemDefault().id,
-    val enabled: Boolean = true,
-    val commitmentDateEpochDay: Long = LocalDate.now().plusDays(7).toEpochDay(),
-)
 
 data class AppUiState(
     val loading: Boolean = true,
     val rulesLoaded: Boolean = false,
+    val draftLoaded: Boolean = false,
+    val draftPersistenceError: String? = null,
     val rules: List<Rule> = emptyList(),
     val history: List<HistoryRecord> = emptyList(),
     val changes: List<PendingChange> = emptyList(),
@@ -85,6 +66,8 @@ data class DraftPreview(
     val overlapCount: Int = 0,
 )
 
+data class DraftRecovery(val draftId: String, val screen: DraftScreen)
+
 sealed interface UiEvent {
     data class Message(val text: String) : UiEvent
     data class Saved(val text: String, val pendingRuleId: String? = null) : UiEvent
@@ -98,8 +81,15 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     private val json = Json { ignoreUnknownKeys = true }
     private val _state = MutableStateFlow(AppUiState())
     val state = _state.asStateFlow()
-    private val _draft = MutableStateFlow(savedState.get<String>("draft")?.let { runCatching { json.decodeFromString<RuleDraft>(it) }.getOrNull() } ?: RuleDraft())
+    private val _draft = MutableStateFlow(RuleDraft())
     val draft = _draft.asStateFlow()
+    private val _checkpoint = MutableStateFlow(DraftCheckpoint())
+    val draftCheckpoint = _checkpoint.asStateFlow()
+    private val _draftRecovery = MutableStateFlow<DraftRecovery?>(null)
+    val draftRecovery = _draftRecovery.asStateFlow()
+    private val _replacementDraft = MutableStateFlow<RuleDraft?>(null)
+    val replacementDraft = _replacementDraft.asStateFlow()
+    private var settingsPaused = false
     private val _clock = MutableStateFlow(container.clock())
     val clock = _clock.asStateFlow()
     private val policyTime = MutableStateFlow(container.clock())
@@ -117,10 +107,36 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     private val channel = Channel<UiEvent>(Channel.BUFFERED)
     val events = channel.receiveAsFlow()
     private var clockJob: Job? = null
+    private var appLoadJob: Job? = null
 
     init {
         viewModelScope.launch {
-            repository.state.catch { _state.update { it.copy(loading = false, rulesLoaded = true, error = "Saved protection could not be loaded. Its records have been preserved.") } }
+            var restored = DraftCheckpoint()
+            var problem: String? = null
+            val transient = savedState.get<String>("draft_checkpoint")?.let { runCatching { json.decodeFromString<DraftCheckpoint>(it) }.getOrNull() }
+            val legacy = savedState.get<String>("draft")?.let { runCatching { json.decodeFromString<RuleDraft>(it) }.getOrNull() }
+            var durable: DraftCheckpoint? = null
+            try {
+                durable = container.draftStore.read()
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                problem = "Your saved draft could not be fully restored."
+            }
+            restored = restoredDraftCheckpoint(durable, transient, legacy)
+            try {
+                restored = restored.reconcileSavedRules(repository.snapshot().rules)
+                if (restored != durable && restored.revision > 0) container.draftStore.write(restored)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                problem = "Your draft is restored, but its checkpoint needs a retry."
+            }
+            publishCheckpoint(restored, persist = false)
+            restored.draft?.let { source -> restored.settingsReturn?.let { _draftRecovery.value = DraftRecovery(source.id, it) } }
+            _state.update { it.copy(draftLoaded = true, draftPersistenceError = problem,
+                loading = !it.rulesLoaded || it.policy.sourceRules != it.rules) }
+        }
+        viewModelScope.launch {
+            repository.state.catch { _state.update { it.copy(loading = !it.draftLoaded, rulesLoaded = true, error = "Saved protection could not be loaded. Its records have been preserved.") } }
                 .collect { value -> _state.update { it.copy(rulesLoaded = true, rules = value.rules,
                     error = if (value.unreadable > 0) "Some saved protection could not be read. Review Settings before relying on it." else null) } }
         }
@@ -130,18 +146,18 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
         viewModelScope.launch {
             combine(_state.map { it.rulesLoaded to it.rules }.distinctUntilChanged().filter { it.first }, policyTime) { (_, rules), now -> rules to now }
                 .mapLatest { (rules, now) -> withContext(Dispatchers.Default) { PolicyOverview.evaluate(rules, now) } }
-                .collect { overview -> _state.update { if (it.rules == overview.sourceRules) it.copy(loading = false, policy = overview, clock = overview.clock) else it } }
+                .collect { overview -> _state.update { if (it.rules == overview.sourceRules) it.copy(loading = !it.draftLoaded, policy = overview, clock = overview.clock) else it } }
         }
         reloadApps()
         refresh()
     }
 
     fun reloadApps() {
-        if (_state.value.appsLoading && _state.value.apps.isNotEmpty()) return
+        if (appLoadJob?.isActive == true) return
         _state.update { it.copy(appsLoading = true, appsError = null) }
-        viewModelScope.launch {
+        appLoadJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { catalog.load() } }
-            _state.update { it.copy(apps = result.getOrDefault(emptyList()), appsLoading = false,
+            _state.update { it.copy(apps = result.getOrElse { _ -> it.apps }, appsLoading = false,
                 appsError = if (result.isFailure) "Your app list could not be loaded. Refresh to try again." else null) }
         }
     }
@@ -149,8 +165,18 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     fun setUiActive(active: Boolean) {
         clockJob?.cancel()
         clockJob = null
+        if (!active) {
+            settingsPaused = _checkpoint.value.settingsReturn != null
+            persistCheckpoint(_checkpoint.value)
+        }
         if (active) {
             refresh()
+            if (settingsPaused) {
+                val checkpoint = _checkpoint.value
+                checkpoint.draft?.let { source -> checkpoint.settingsReturn?.let { _draftRecovery.value = DraftRecovery(source.id, it) } }
+                settingsPaused = false
+                reloadApps()
+            }
             clockJob = viewModelScope.launch {
                 repository.completeExpired(container.clock())
                 repository.pruneHistory(container.clock())
@@ -183,28 +209,115 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     fun setupMessage(message: String) { channel.trySend(UiEvent.Message(message)) }
 
     fun beginDraft(kind: RuleKind, context: LifeContext = LifeContext.STUDY, rule: Rule? = null): Boolean {
+        if (!_state.value.draftLoaded || _state.value.busy) return false
         val saved = rule?.let { candidate -> _state.value.rules.firstOrNull { it.id == candidate.id } }
         if (saved != null && CommitmentPolicy.isLocked(saved, container.clock())) {
             channel.trySend(UiEvent.Message("This commitment cannot be edited before its confirmed end."))
             return false
         }
-        val recent = _state.value.rules.firstOrNull()?.packages?.toSet().orEmpty()
         val next = if (rule != null) RuleDraft(rule.id, rule.name, rule.context, rule.kind, rule.packages.toSet(),
             days = rule.days, windows = rule.windows, commitment = Commitment.LOCKED, createdAt = rule.createdAt,
             revision = rule.revision, zoneId = rule.zoneId, enabled = rule.enabled)
-        else RuleDraft(kind = kind, context = context, packages = recent,
-            windows = when (context) {
-                LifeContext.BEDTIME -> listOf(TimeWindow(22 * 60 + 30, 7 * 60, true))
-                else -> if (kind == RuleKind.ALLOW_ONLY) listOf(TimeWindow(12 * 60 + 30, 13 * 60), TimeWindow(19 * 60, 19 * 60 + 30))
-                    else listOf(TimeWindow(9 * 60, 17 * 60))
-            }, days = if (context == LifeContext.WORK) (1..5).toSet() else (1..7).toSet())
-        updateDraft { next }
+        else RuleDraft.fresh(kind, context, container.clock())
+        if (_checkpoint.value.resumable && _checkpoint.value.draft?.id != next.id) {
+            _replacementDraft.value = next
+            return false
+        }
+        replaceDraft(next)
         return true
     }
 
     fun updateDraft(change: (RuleDraft) -> RuleDraft) {
-        _draft.update(change)
-        savedState["draft"] = json.encodeToString(_draft.value)
+        if (_state.value.busy) return
+        val previous = _checkpoint.value.draft ?: return
+        var next = change(previous)
+        if (next.untilTime && !previous.untilTime) next = next.chooseUntil(next.untilMinute, next.untilTomorrow, container.clock())
+        if (next != previous) editCheckpoint { it.copy(draft = next, hasEdits = true) }
+    }
+
+    fun chooseUntil(minute: Int, tomorrow: Boolean) = updateDraft { it.chooseUntil(minute, tomorrow, container.clock()) }
+
+    private fun replaceDraft(draft: RuleDraft) {
+        editCheckpoint { it.copy(draft = draft, screen = DraftScreen.BUILDER, settingsReturn = null, hasEdits = false, saving = false) }
+    }
+
+    fun confirmReplacement(): Boolean {
+        val next = _replacementDraft.value ?: return false
+        if (_state.value.busy) return false
+        _replacementDraft.value = null
+        replaceDraft(next)
+        return true
+    }
+    fun cancelReplacement() { _replacementDraft.value = null }
+    fun resumeDraft(): Boolean {
+        if (_checkpoint.value.draft == null || _state.value.busy) return false
+        _replacementDraft.value = null
+        editCheckpoint { it.copy(screen = DraftScreen.BUILDER, settingsReturn = null) }
+        return true
+    }
+    fun discardDraft() {
+        if (!_state.value.busy) editCheckpoint { it.copy(draft = null, hasEdits = false, settingsReturn = null, saving = false) }
+    }
+    fun recordDraftScreen(screen: DraftScreen) {
+        if (_checkpoint.value.draft != null && _checkpoint.value.screen != screen) editCheckpoint { it.copy(screen = screen) }
+    }
+    fun completeDraftRecovery(request: DraftRecovery) {
+        if (_draftRecovery.value != request) return
+        if (_checkpoint.value.draft?.id == request.draftId)
+            editCheckpoint { it.copy(screen = request.screen, settingsReturn = null) }
+        _draftRecovery.value = null
+    }
+    suspend fun restoreLatestCheckpoint(): DraftCheckpoint {
+        val durable = container.draftStore.read()
+        var restored = restoredDraftCheckpoint(durable, _checkpoint.value, null).reconcileSavedRules(repository.snapshot().rules)
+        if (restored.revision == 0L && restored.draft != null) restored = restored.copy(revision = 1)
+        if (restored.revision >= _checkpoint.value.revision) publishCheckpoint(restored, persist = false)
+        restored.draft?.let { source -> restored.settingsReturn?.let { _draftRecovery.value = DraftRecovery(source.id, it) } }
+        return restored
+    }
+
+    private fun editCheckpoint(change: (DraftCheckpoint) -> DraftCheckpoint): DraftCheckpoint {
+        val current = _checkpoint.value
+        return change(current).copy(revision = current.revision + 1, updatedAt = container.clock().wallTime).also { publishCheckpoint(it) }
+    }
+    private fun publishCheckpoint(checkpoint: DraftCheckpoint, persist: Boolean = true) {
+        _checkpoint.value = checkpoint
+        checkpoint.draft?.let { _draft.value = it }
+        savedState["draft_checkpoint"] = json.encodeToString(checkpoint)
+        savedState.remove<String>("draft")
+        if (persist) persistCheckpoint(checkpoint)
+    }
+    private fun persistCheckpoint(checkpoint: DraftCheckpoint) {
+        if (checkpoint.revision <= 0) return
+        container.scope.launch {
+            try {
+                container.draftStore.write(checkpoint)
+                if (_checkpoint.value.revision == checkpoint.revision) _state.update { it.copy(draftPersistenceError = null) }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                if (_checkpoint.value.revision == checkpoint.revision) _state.update { it.copy(draftPersistenceError = "Draft not saved yet. Retry before leaving for setup.") }
+            }
+        }
+    }
+    private suspend fun checkpointSettings(fromDraft: Boolean, returnTo: DraftScreen) {
+        if (!fromDraft) return
+        check(_checkpoint.value.draft != null) { "Return to your draft before opening setup." }
+        editCheckpoint { it.copy(screen = DraftScreen.SETUP, settingsReturn = returnTo) }
+        flushDraft()
+    }
+    private suspend fun flushDraft() {
+        do {
+            val checkpoint = _checkpoint.value
+            container.draftStore.write(checkpoint)
+        } while (_checkpoint.value.revision != checkpoint.revision)
+        _state.update { it.copy(draftPersistenceError = null) }
+    }
+    fun openSettings(fromDraft: Boolean, returnTo: DraftScreen, launch: () -> Unit) = action {
+        checkpointSettings(fromDraft, returnTo)
+        launch()
+    }
+    fun cancelSettingsHandoff() {
+        if (_checkpoint.value.settingsReturn != null) editCheckpoint { it.copy(settingsReturn = null) }
     }
 
     fun toggleApp(packageName: String) = updateDraft {
@@ -213,27 +326,13 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
 
     fun draftRule(enabled: Boolean = true): Rule = ruleFrom(_draft.value, container.clock(), enabled)
 
-    private fun ruleFrom(draft: RuleDraft, clock: ClockSnapshot, enabled: Boolean = true): Rule {
-        val name = draft.name.trim().ifEmpty { "${draft.context.displayName()} ${if (draft.kind == RuleKind.QUICK_BLOCK) "session" else "routine"}" }
-        val end = if (draft.untilTime) {
-            clock.wallTime.inZone(ZoneId.systemDefault()).toLocalDate().plusDays(if (draft.untilTomorrow) 1 else 0).atStartOfDay()
-                .plusMinutes(draft.untilMinute.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        } else clock.wallTime + draft.minutes * 60_000L
-        val commitmentEnd = LocalDate.ofEpochDay(draft.commitmentDateEpochDay).atStartOfDay(ZoneId.of(draft.zoneId)).toInstant().toEpochMilli()
-        return Rule(id = draft.id, name = name, context = draft.context, packages = draft.packages.toList(),
-            kind = draft.kind, enabled = enabled, commitment = Commitment.LOCKED,
-            days = draft.days, windows = draft.windows, zoneId = draft.zoneId,
-            startedAt = if (draft.kind == RuleKind.QUICK_BLOCK) clock.wallTime else 0,
-            endsAt = if (draft.kind == RuleKind.QUICK_BLOCK) end else 0,
-            elapsedEndsAt = if (draft.kind == RuleKind.QUICK_BLOCK) clock.elapsedTime + end - clock.wallTime else 0,
-            bootCount = clock.bootCount, createdAt = draft.createdAt.takeIf { it > 0 } ?: clock.wallTime, revision = draft.revision,
-            commitmentEndsAt = if (draft.kind == RuleKind.QUICK_BLOCK) 0 else commitmentEnd,
-            commitmentElapsedEndsAt = if (draft.kind == RuleKind.QUICK_BLOCK) 0 else clock.elapsedTime + commitmentEnd - clock.wallTime)
-    }
+    private fun ruleFrom(draft: RuleDraft, clock: ClockSnapshot, enabled: Boolean = true): Rule = draft.toRule(clock, enabled)
 
     private fun draftError(d: RuleDraft, rule: Rule, rules: List<Rule>, now: ClockSnapshot): String? {
         if (d.kind == RuleKind.QUICK_BLOCK && d.minutes !in 1..1440 && !d.untilTime) return "Choose between 1 minute and 24 hours."
         val previous = rules.firstOrNull { it.id == rule.id }
+        if (d.untilTime && d.untilDateEpochDay == null) return "Confirm the end date and time."
+        if (previous != null && d.revision > 0 && previous.revision != d.revision) return "This plan changed. Reopen it before editing."
         if (previous != null && CommitmentPolicy.isLocked(previous, now)) return "This commitment is locked until its confirmed end."
         if (d.kind == RuleKind.QUICK_BLOCK && (rule.endsAt <= rule.startedAt || rule.endsAt - rule.startedAt > 86_400_000)) return "Choose an end in the next 24 hours."
         return RuleEngine.validate(rule) ?: CommitmentPolicy.activationError(rule.copy(enabled = d.enabled), now) ?:
@@ -255,7 +354,7 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
     }
 
     fun saveDraft(asDraft: Boolean = false) = action {
-        val source = _draft.value
+        val source = _checkpoint.value.draft ?: error("Create a draft first.")
         if (!asDraft && source.enabled) container.protection.requireReady()
         val now = container.clock()
         val rule = withContext(Dispatchers.Default) {
@@ -264,10 +363,18 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
             candidate
         }
         check(withContext(Dispatchers.IO) { rule.packages.none { it in AppCatalog(getApplication<Application>()).protectedPackages } }) { "Keep essential system controls available." }
-        val saved = repository.save(rule, container.clock())
-        reschedule()
+        editCheckpoint { it.copy(saving = true) }
+        flushDraft()
+        val saved = try { repository.save(rule, container.clock()) }
+        catch (failure: Exception) { editCheckpoint { it.copy(saving = false) }; throw failure }
+        val cleared = editCheckpoint { it.copy(draft = null, settingsReturn = null, saving = false, hasEdits = false) }
+        try { container.draftStore.write(cleared) } catch (failure: Exception) { if (failure is CancellationException) throw failure }
+        val configured = try { reschedule(); true } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            false
+        }
         var acknowledged = true
-        if (saved && rule.enabled) {
+        if (saved && rule.enabled && configured) {
             val current = repository.snapshot().rules.first { it.id == rule.id }
             val key = "${current.id}:${current.revision}"
             acknowledged = withTimeoutOrNull(3000) {
@@ -277,7 +384,7 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
         channel.send(UiEvent.Saved(when {
             !saved -> "Review the waiting period to confirm this change."
             asDraft -> "Routine saved. Turn it on when you are ready."
-            !acknowledged -> "Saved, but native configuration is not confirmed. Review app protection."
+            !acknowledged || !configured -> "Saved. Review app protection to confirm blocking."
             rule.kind == RuleKind.QUICK_BLOCK -> "Session locked until its confirmed end."
             rule.enabled -> "Routine saved. Its commitment is locked."
             else -> "Routine changes saved. It is still off."
@@ -293,7 +400,12 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
 
     fun confirmChange(id: String) = action { repository.confirmChange(id, container.clock()); reschedule(); channel.send(UiEvent.Message("Your change was applied.")) }
     fun cancelChange(id: String) = action { repository.cancelChange(id) }
-    fun deleteData() = action { repository.deleteAll(container.clock()); reschedule(); channel.send(UiEvent.Saved("Local plans and history deleted.")) }
+    fun deleteData() = action {
+        repository.deleteAll(container.clock())
+        val cleared = editCheckpoint { it.copy(draft = null, settingsReturn = null, saving = false, hasEdits = false) }
+        container.draftStore.write(cleared)
+        reschedule(); channel.send(UiEvent.Saved("Local plans and history deleted."))
+    }
     fun acceptManagedProtection() = action {
         withContext(Dispatchers.IO) {
             container.preferences.commitOrThrow("Your setup choice could not be saved.") { putBoolean("managed_disclosure", true) }
@@ -301,7 +413,8 @@ class TimeOutViewModel(application: Application, private val savedState: SavedSt
         refresh()
         container.managed.reconcile()
     }
-    fun acceptStandardProtection(onAccepted: () -> Unit) = action {
+    fun acceptStandardProtection(fromDraft: Boolean, onAccepted: () -> Unit) = action {
+        checkpointSettings(fromDraft, DraftScreen.BUILDER)
         withContext(Dispatchers.IO) {
             container.preferences.commitOrThrow("Your setup choice could not be saved.") { putBoolean("standard_disclosure", true) }
         }

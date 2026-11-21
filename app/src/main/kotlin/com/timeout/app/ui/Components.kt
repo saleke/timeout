@@ -98,23 +98,22 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun ContextChoices(selected: LifeContext?, onSelect: (LifeContext) -> Unit, includeAll: Boolean = false, onAll: () -> Unit = {}) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (includeAll) FilterChip(selected == null, onAll, label = { Text("All") })
-        LifeContext.entries.forEach { context ->
-            FilterChip(selected == context, { onSelect(context) }, label = { Text(context.displayName()) },
-                leadingIcon = { Symbol(context.icon(), modifier = Modifier.size(18.dp), tint = if (selected == context) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) })
-        }
-    }
+    val options = remember(includeAll) { buildList {
+        if (includeAll) add(ChoiceOption("all", "All"))
+        LifeContext.entries.forEach { add(ChoiceOption(it.name, it.displayName(), it.icon())) }
+    } }
+    AdaptiveChoices(options, setOf(selected?.name ?: "all"), { if (it == "all") onAll() else onSelect(LifeContext.valueOf(it)) })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailScaffold(title: String, onBack: () -> Unit, bottom: @Composable () -> Unit = {}, content: @Composable (PaddingValues) -> Unit) {
+fun DetailScaffold(title: String, onBack: () -> Unit, bottom: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {}, content: @Composable (PaddingValues) -> Unit) {
     val snackbar = LocalPageSnackbar.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { TopAppBar(title = { Text(title) }, navigationIcon = { IconButton(onBack) { Symbol(R.drawable.ic_arrow_back, description = "Back") } },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)) },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background), actions = actions) },
         bottomBar = bottom,
         snackbarHost = { snackbar?.let { SnackbarHost(it) } },
         content = content,
